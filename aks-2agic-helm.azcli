@@ -3,45 +3,31 @@
 # Apps then installed to the namespaces that the AGIC is watching
 
 # Variables
-rg='aks'
+rg='aks-2agic-helm'
 location='uaenorth'
 aks_vnet_name='aks'
 aks_vnet_address='10.0.0.0/8'
 aks_system_subnet_name='AksSubnet'
 aks_system_subnet_address='10.240.0.0/16'
-aks_vm_subnet_name='VMSubnet'
-aks_vm_subnet_address='10.2.0.0/24'
-aks_appgw1_subnet_name='AppGw2Subnet'
+aks_appgw1_subnet_name='AppGw1Subnet'
 aks_appgw1_subnet_address='10.2.1.0/24'
-aks_appgw2_subnet_name='AppGw1Subnet'
+aks_appgw2_subnet_name='AppGw2Subnet'
 aks_appgw2_subnet_address='10.2.2.0/24'
 aks_name='akscluster'
-aks_jump_vm_name='jump'
-
-# jump_init_file=~/jump_init.txt
-# cat <<EOF > $jump_init_file
-# #cloud-config
-# runcmd:
-#   - echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
-#   - apt-get update -y && apt-get dist-upgrade -y && apt autoremove -y
-#   - sudo curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl &&
-#   - chmod +x ./kubectl &&
-#   - mv ./kubectl /usr/local/bin/kubectl
-#   - sudo curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 &&
-#   - chmod 700 get_helm.sh &&
-#   - ./get_helm.sh
-#   - curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-# EOF
 
 
 # resource group
 echo -e "\e[1;36mCreating Resource Group $rg....\e[0m"
 az group create --location $location -n $rg -o none
 
-# vnets
+# AKS Identity
+echo -e "\e[1;36mCreating Managed Identity $aks_name-identity....\e[0m"
+az identity create -g $rg -n $aks_name-identity -o none
+aks_identity_id=$(az identity show -g $rg -n $aks_name-identity --query id -o tsv)
+
+# VNet
 echo -e "\e[1;36mCreating VNet $aks_vnet_name....\e[0m"
 az network vnet create -g $rg -n $aks_vnet_name --address-prefixes $aks_vnet_address --subnet-name $aks_system_subnet_name --subnet-prefixes $aks_system_subnet_address -o none
-az network vnet subnet create -g $rg -n $aks_vm_subnet_name --address-prefixes $aks_vm_subnet_address --vnet-name $aks_vnet_name -o none
 az network vnet subnet create -g $rg -n $aks_appgw1_subnet_name --address-prefixes $aks_appgw1_subnet_address --vnet-name $aks_vnet_name -o none
 az network vnet subnet create -g $rg -n $aks_appgw2_subnet_name --address-prefixes $aks_appgw2_subnet_address --vnet-name $aks_vnet_name -o none
 
@@ -49,12 +35,12 @@ az network vnet subnet create -g $rg -n $aks_appgw2_subnet_name --address-prefix
 appgw1_name="appgw1"
 echo -e "\e[1;36mCreating Application Gateway $appgw1_name....\e[0m"
 az network public-ip create -g $rg -n $appgw1_name-pubip --allocation-method Static --sku Standard -o none
-az network application-gateway create -n $appgw1_name -g $rg --public-ip-address $appgw1_name-pubip --sku Standard_v2 --vnet-name $aks_vnet_name --subnet $aks_appgw1_subnet_name --no-wait
+az network application-gateway create -n $appgw1_name -g $rg --priority 10 --public-ip-address $appgw1_name-pubip --sku Standard_v2 --vnet-name $aks_vnet_name --subnet $aks_appgw1_subnet_name --no-wait
 # app gw2
 appgw2_name="appgw2"
 echo -e "\e[1;36mCreating Application Gateway $appgw2_name....\e[0m"
 az network public-ip create -g $rg -n $appgw2_name-pubip --allocation-method Static --sku Standard -o none
-az network application-gateway create -n $appgw2_name -g $rg --public-ip-address $appgw2_name-pubip --sku Standard_v2 --vnet-name $aks_vnet_name --subnet $aks_appgw2_subnet_name --no-wait
+az network application-gateway create -n $appgw2_name -g $rg --priority 10 --public-ip-address $appgw2_name-pubip --sku Standard_v2 --vnet-name $aks_vnet_name --subnet $aks_appgw2_subnet_name --no-wait
 
 # log analytics
 echo -e "\e[1;36mCreating Log Analytics Workspace $aks_name-logAnalytics....\e[0m"
@@ -62,14 +48,12 @@ az monitor log-analytics workspace create -g $rg -n $aks_name-logAnalytics -o no
 log_analytics_ws_id=$(az monitor log-analytics workspace show -g $rg -n $aks_name-logAnalytics --query id -o tsv)
 
 # aks cluster
-echo -e "\e[1;36mCreating Managed Identity $aks_name-identity....\e[0m"
 aks_system_subnet_id=$(az network vnet subnet show -g $rg -n $aks_system_subnet_name --vnet-name $aks_vnet_name --query id -o tsv)
-az identity create -g $rg -n $aks_name-identity -o none
-aks_identity_id=$(az identity show -g $rg -n $aks_name-identity --query id -o tsv)
 echo -e "\e[1;36mCreating AKS Cluster $aks_name....\e[0m"
-az aks create -g $rg -n $aks_name --node-resource-group $rg-$aks_name-nodes --enable-addons "monitoring" --workspace-resource-id $log_analytics_ws_id --network-plugin azure --enable-rbac --assign-identity $aks_identity_id --node-vm-size Standard_b2ms --vnet-subnet-id $aks_system_subnet_id --service-cidr "10.0.0.0/16" --dns-service-ip "10.0.0.10" --docker-bridge-address "172.17.0.1/16" -o none
+az aks create -g $rg -n $aks_name --node-count 1 --node-resource-group $rg-$aks_name-nodes --enable-addons "monitoring" --workspace-resource-id $log_analytics_ws_id --network-plugin azure --assign-identity $aks_identity_id --node-vm-size Standard_b2ms --vnet-subnet-id $aks_system_subnet_id --service-cidr "10.0.0.0/16" --dns-service-ip "10.0.0.10" --docker-bridge-address "172.17.0.1/16" -o none
 
 # Helm AGIC1 Configuration file
+echo -e "\e[1;36mPreparing Application Gateway Ingress Controller configuration file for $appgw1_name....\e[0m"
 helm_agic1_config_file=~/helm-agic1-config.yaml
 cat <<EOF > $helm_agic1_config_file
 verbosityLevel: 3
@@ -127,8 +111,9 @@ kubeletidentityResourceID=$(az aks show -g $rg -n $aks_name --query 'identityPro
 kubeletidentityClientID=$(az aks show -g $rg -n $aks_name --query 'identityProfile.kubeletidentity.clientId' -o tsv)
 # Obtain the AKS Node Resource Group
 AKSNodeRG=$(az aks list -g $rg --query '[].nodeResourceGroup' -o tsv)
-sleep 30
+sleep 45
 # Give the identity Contributor access to the Application Gateway #1
+echo -e "\e[1;36mAssign Contributor role to $mgmt_idntity_name on $appgw1_name AppGW and $aks_name resources....\e[0m"
 az role assignment create --role Contributor --assignee $identityClientId --scope $AppgwID -o none
 # Get the Application Gateway resource group ID
 ResourceGroupID=$(az group show -n $rg --query id -o tsv)
@@ -143,6 +128,7 @@ az role assignment create --assignee $kubeletidentityobjectId  --role "Contribut
 # Assign the Kubelet Identity the Managed Identity Operator role on the new managed identity
 az role assignment create --assignee $kubeletidentityobjectId  --role "Managed Identity Operator" --scope $identityResourceId -o none
 # Deploy an AAD pod identity in an RBAC-enabled cluster (comment line 62 if not using an RBAC-enabled cluster.)
+echo -e "\e[1;36mDeploying an AAD pod identity in $aks_name resources....\e[0m"
 kubectl create -f https://raw.githubusercontent.com/Azure/aad-pod-identity/master/deploy/infra/deployment-rbac.yaml
 
 # Modifying the helm chart config file for AGIC#1
@@ -155,16 +141,25 @@ sed -i "/<agic>/ s//$appgw1_name-agic/" $helm_agic1_config_file
 sed -i "s|<identityResourceId>|${identityResourceId}|g" $helm_agic1_config_file
 sed -i "/<identityClientId>/ s//$identityClientId/" $helm_agic1_config_file
 sed -i -e "s|enabled: false # true/false|enabled: true # true/false|" $helm_agic1_config_file
+
+# Installing Helm
+echo -e "\e[1;36mInstalling Helm tool....\e[0m"
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod +x get_helm.sh
+./get_helm.sh
+
 # Adding AGIC helm repo
+echo -e "\e[1;36mAdding AGIC helm repo....\e[0m"
 helm repo add application-gateway-kubernetes-ingress https://appgwingress.blob.core.windows.net/ingress-azure-helm-package/
 helm repo update
 # Creating a namespace to be watched by AGIC#1
+echo -e "\e[1;36mCreating a name space ($appgw1_name-namespace) for services to be monitored by $appgw1_name-agic ingress controller ....\e[0m"
 kubectl create namespace $appgw1_name-namespace
 # Deploying AGIC#1
+echo -e "\e[1;36mDeploying $appgw1_name-agic ingress controller....\e[0m"
 helm upgrade --install $appgw1_name-agic -f $helm_agic1_config_file application-gateway-kubernetes-ingress/ingress-azure
 
 # Deploying AGIC#2
-echo -e "\e[1;36mDeploying the AGIC Controller $appgw2_name-agic ....\e[0m"
 AppgwID=$(az network application-gateway show -g $rg -n  $appgw2_name --query id -o tsv)
 # Give the identity Contributor access to the Application Gateway #2
 az role assignment create --role Contributor --assignee $identityClientId --scope $AppgwID -o none
@@ -178,8 +173,10 @@ sed -i "s|<identityResourceId>|${identityResourceId}|g" $helm_agic2_config_file
 sed -i "/<identityClientId>/ s//$identityClientId/" $helm_agic2_config_file
 sed -i -e "s|enabled: false # true/false|enabled: true # true/false|" $helm_agic2_config_file
 # Creating a namespace to be watched by AGIC#2
+echo -e "\e[1;36mCreating a name space ($appgw2_name-namespace) for services to be monitored by $appgw2_name-agic ingress controller ....\e[0m"
 kubectl create namespace $appgw2_name-namespace
 # Deploying AGIC#2
+echo -e "\e[1;36mDeploying $appgw2_name-agic ingress controller....\e[0m"
 helm upgrade --install $appgw2_name-agic -f $helm_agic2_config_file application-gateway-kubernetes-ingress/ingress-azure
 
 # Waiting for the ingress controller to be deployed
@@ -191,6 +188,7 @@ appgw2_pubip=$(az network public-ip show -g $rg -n $appgw2_name-pubip --query ip
 #############################
 # App 1  deployed to appgw1 #
 #############################
+echo -e "\e[1;36mDeploying App1 in $appgw1_name-namespace with $appgw1_name-agic ingress controller....\e[0m"
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -247,6 +245,7 @@ EOF
 #############################
 # App 2  deployed to appgw2 #
 #############################
+echo -e "\e[1;36mDeploying App2 in $appgw2_name-namespace with $appgw2_name-agic ingress controller....\e[0m"
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
@@ -300,5 +299,5 @@ spec:
               number: 80
 EOF
 
-echo -e "\e[1;36mTry to access http://$appgw1_pubip.nip.io/ and http://$appgw2_pubip.nip.io/ ....\e[0m"
+echo -e "\e[1;36mTry to access http://$appgw1_pubip.nip.io/ and http://$appgw2_pubip.nip.io/ \e[0m"
 rm $helm_agic1_config_file $helm_agic2_config_file
