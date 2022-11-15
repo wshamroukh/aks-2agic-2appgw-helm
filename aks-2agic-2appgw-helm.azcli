@@ -3,7 +3,7 @@
 # Apps then installed to the namespaces that the AGIC is watching
 
 # Variables
-rg='aks-2agic-helm'
+rg='1aks-2agic-2appgw-helm'
 location='uaenorth'
 aks_vnet_name='aks'
 aks_vnet_address='10.0.0.0/8'
@@ -199,7 +199,7 @@ metadata:
     app: aspnetapp
 spec:
   containers:
-  - image: "mcr.microsoft.com/dotnet/core/samples:aspnetapp"
+  - image: "mcr.microsoft.com/dotnet/samples:aspnetapp"
     name: aspnetapp-image
     ports:
     - containerPort: 80
@@ -256,7 +256,7 @@ metadata:
     app: aspnetapp
 spec:
   containers:
-  - image: "mcr.microsoft.com/dotnet/core/samples:aspnetapp"
+  - image: "mcr.microsoft.com/dotnet/samples:aspnetapp"
     name: aspnetapp-image
     ports:
     - containerPort: 80
